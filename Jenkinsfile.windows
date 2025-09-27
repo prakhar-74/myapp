@@ -1,70 +1,59 @@
 pipeline {
   agent any
-  environment {
-    IMAGE = 'Prakhar8070/myapp'
-    SONAR_HOST_URL = 'http://localhost:9000'
-    SONAR_TOKEN = credentials('sonar-token')
-    SNYK_TOKEN = credentials('snyk-token')
-    DOCKERHUB_CREDS = credentials('dockerhub-creds')
-  }
-  options { timestamps() }
-  stages {
-    stage('Checkout') { steps { checkout scm } }
 
-    stage('Build') {
+  environment {
+    DOCKER_IMAGE = "prakhar8070/myapp:dev"
+    // Uncomment next line if you enabled Docker TCP in Docker Desktop:
+    // DOCKER_HOST = "tcp://localhost:2375"
+  }
+
+  stages {
+    stage('Checkout') {
       steps {
-        bat 'node -v && npm ci'
-        bat 'npm run build'
-        bat 'docker build -t %IMAGE%:%GIT_COMMIT% .'
+        git branch: 'main', url: 'https://github.com/prakhar-74/myapp.git'
       }
     }
 
-    stage('Test') {
-      steps { bat 'npm test' }
-      post {
-        always {
-          archiveArtifacts artifacts: 'coverage/lcov.info', fingerprint: true
+    stage('Diagnostics') {
+      steps {
+        bat 'ver'
+        bat 'where node || echo node not found'
+        bat 'node -v || exit /b 1'
+        bat 'npm -v || exit /b 1'
+        bat 'where docker || echo docker not found'
+        bat 'docker version || exit /b 1'
+      }
+    }
+
+    stage('Install dependencies') {
+      steps {
+        bat 'npm ci'
+      }
+    }
+
+    stage('Run tests') {
+      steps {
+        bat 'npm test'
+      }
+    }
+
+    stage('Build image') {
+      steps {
+        bat "docker build -t %DOCKER_IMAGE% ."
+      }
+    }
+
+    stage('Push image') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'docker-hub-creds',
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
+          bat 'echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin'
+          bat "docker push %DOCKER_IMAGE%"
         }
       }
-    }
-
-    stage('Code Quality') {
-      steps {
-        bat 'npx sonar-scanner -Dsonar.projectKey=myapp -Dsonar.host.url=%SONAR_HOST_URL% -Dsonar.login=%SONAR_TOKEN%'
-      }
-    }
-
-    stage('Security') {
-      steps {
-        bat 'set SNYK_TOKEN=%SNYK_TOKEN% && npx snyk test || exit /b 0'
-        bat 'trivy image --exit-code 0 --severity LOW,MEDIUM %IMAGE%:%GIT_COMMIT%'
-        bat 'trivy image --exit-code 1 --severity HIGH,CRITICAL %IMAGE%:%GIT_COMMIT% || exit /b 0'
-        // If Trivy not installed natively, use Docker:
-        // bat 'docker run --rm aquasec/trivy:latest image --exit-code 0 --severity LOW,MEDIUM %IMAGE%:%GIT_COMMIT%'
-        // bat 'docker run --rm aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL %IMAGE%:%GIT_COMMIT% || exit /b 0'
-      }
-    }
-
-    stage('Deploy - Staging') {
-      steps {
-        bat 'echo %DOCKERHUB_CREDS_PSW% | docker login -u %DOCKERHUB_CREDS_USR% --password-stdin'
-        bat 'docker tag %IMAGE%:%GIT_COMMIT% %IMAGE%:staging-%BUILD_NUMBER%'
-        bat 'docker push %IMAGE%:staging-%BUILD_NUMBER%'
-        bat 'docker compose -f docker-compose.staging.yml up -d --build'
-      }
-    }
-
-    stage('Release - Production') {
-      when { branch 'main' }
-      steps {
-        bat 'docker tag %IMAGE%:%GIT_COMMIT% %IMAGE%:prod-%BUILD_NUMBER%'
-        bat 'docker push %IMAGE%:prod-%BUILD_NUMBER%'
-        bat 'git tag v%BUILD_NUMBER% & git push origin v%BUILD_NUMBER%'
-      }
-    }
-
-    stage('Monitoring & Alerting') {
-      steps { bat 'echo Monitoring via Prometheus/Grafana; /metrics exposed' }
     }
   }
 }
