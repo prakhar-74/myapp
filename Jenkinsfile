@@ -3,9 +3,8 @@ pipeline {
 
   options {
     timestamps()
-    ansiColor('xterm')
-    // Jenkins will do the default SCM checkout for this Jenkinsfile
-  }
+    disableConcurrentBuilds()
+ }
 
   environment {
     DOCKER_IMAGE = 'prakhar8070/myapp:dev'
